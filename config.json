@@ -1,7 +1,13 @@
 {
-  "port" : 1234,
+  "Port" : 1234,
   "SendAcks" : true,
-  "fields" : {
-    "TXA1": "string"
-  }
+  "Fields" : [
+    {
+      LineName:"MSH",
+      FieldNumber: 4,
+      Nullable: false,
+      Type: "string"
+      Pattern: "XYZ_ADMITTING"
+    }
+  ]
 }

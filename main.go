@@ -1,23 +1,34 @@
 package main
 
 import (
-  "fmt"
-  "encoding/json"
-  "os"
-  "net"
-  "log"
-  "strconv"
-  "bytes"
-  "strings"
-  "time"
-  "io"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"regexp"
+
+	//"regexp"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type Config struct {
   Port int 
   SendAcks bool
-  Fields map[string]string
+  Fields []FieldValidator 
 }
+type FieldValidator struct {
+  LineName string
+  FieldNumber int
+  NonNullable bool
+  Type string
+  Pattern string
+}
+
 func LoadConfigs() (*Config, error){
   data, err := os.ReadFile("config.json")
   if err != nil {
@@ -91,7 +102,7 @@ type Server struct {
   sendAcks bool
   listener net.Listener
   quitChan chan struct{}
-  msgChan chan Message 
+  msgChan chan Message
 }
 
 func NewServer(port string, ack bool) *Server {
@@ -179,6 +190,77 @@ func (s *Server) readLoop(conn net.Conn) {
   }
 }
 
+type FieldResult struct {
+  LineName string
+  FieldNumber string
+  Result string
+}
+
+type FailOutCome struct {
+  Expected []FieldResult 
+  Found []FieldResult 
+  RegexFail bool
+  NullFail bool
+  TypeFail bool
+}
+
+func (f *FailOutCome) DidAllConfigsPass() bool {
+  if (!f.RegexFail || !f.NullFail || !f.TypeFail){
+    return false
+  }
+  return true
+}
+
+func CheckAgainstConfigs (config *Config, hl7 *HL7) FailOutCome {
+  outcome := FailOutCome{}
+  for _, check := range config.Fields {
+    for _, line := range hl7.Segments {
+      if(check.LineName[:3] == line.Header){
+        //Check if were doing more detailed line
+        if(len(check.LineName) > 3){
+          if(check.LineName[4:] != line.Fields[1]){
+            break
+          } 
+        }
+        spot := line.Fields[check.FieldNumber + 1]
+        //nullable
+        if (check.NonNullable && spot == ""){
+          outcome.NullFail = true
+        }
+        //type
+        if(check.Type == "number") {
+          _, err := strconv.Atoi(spot)
+          if err != nil {
+            outcome.TypeFail = true
+          }
+        }
+        //Pattern
+        if(check.Pattern != ""){
+          match, _ := regexp.MatchString(check.Pattern,spot)
+          if(!match){
+            outcome.RegexFail = true
+          }
+        }
+        expected := FieldResult{
+          LineName: check.LineName,
+          FieldNumber: strconv.Itoa(check.FieldNumber),
+          Result: check.Pattern,
+        }
+        found := FieldResult{
+          LineName: line.Header,
+          FieldNumber: strconv.Itoa(check.FieldNumber+1),
+          Result: spot,
+        }
+
+        outcome.Expected = append(outcome.Expected, expected)
+        outcome.Found = append(outcome.Found, found)
+      }
+    }
+
+  }
+  return outcome
+}
+
 
 func main() {
   //Load configurations
@@ -198,7 +280,7 @@ func main() {
   go func(){
     fmt.Print("Reading from the channel")
     for msg := range server.msgChan{
-      fmt.Printf("Received message %s \n ", msg.Message.Segments[0].Fields[0])
+      CheckAgainstConfigs(config,msg.Message)
     }
   }()
 
