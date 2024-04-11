@@ -1,0 +1,7 @@
+{
+  "port" : 1234,
+  "SendAcks" : true,
+  "fields" : {
+    "TXA1": "string"
+  }
+}
