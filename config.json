@@ -1,13 +1,14 @@
 {
   "Port" : 1234,
   "SendAcks" : true,
+  "VerboseLogging": true,
   "Fields" : [
     {
-      LineName:"MSH",
-      FieldNumber: 4,
-      Nullable: false,
-      Type: "string"
-      Pattern: "XYZ_ADMITTING"
+      "LineName":"MSH",
+      "FieldNumber": 4,
+      "NonNullable": false,
+      "Type": "string",
+      "Pattern": "XYZ_ADMITTING"
     }
   ]
 }

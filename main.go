@@ -9,18 +9,18 @@ import (
 	"net"
 	"os"
 	"regexp"
-
-	//"regexp"
-	"strconv"
-	"strings"
 	"time"
+  "strconv"
+  "strings"
 )
 
 type Config struct {
   Port int 
   SendAcks bool
+  VerboseLogging bool
   Fields []FieldValidator 
 }
+
 type FieldValidator struct {
   LineName string
   FieldNumber int
@@ -199,13 +199,14 @@ type FieldResult struct {
 type FailOutCome struct {
   Expected []FieldResult 
   Found []FieldResult 
+  OutcomeSummary []string
   RegexFail bool
   NullFail bool
   TypeFail bool
 }
 
 func (f *FailOutCome) DidAllConfigsPass() bool {
-  if (!f.RegexFail || !f.NullFail || !f.TypeFail){
+  if (f.RegexFail || f.NullFail || f.TypeFail){
     return false
   }
   return true
@@ -222,43 +223,107 @@ func CheckAgainstConfigs (config *Config, hl7 *HL7) FailOutCome {
             break
           } 
         }
-        spot := line.Fields[check.FieldNumber + 1]
+        outcomeSummary := "Pass";
+
+        var spot string
+
+        //NOTE Special handling for MSH because the split grabs something different than 7edit ui 
+        if(check.LineName == "MSH"){
+          spot = line.Fields[check.FieldNumber-1]
+        } else {
+          spot = line.Fields[check.FieldNumber]
+        }
         //nullable
         if (check.NonNullable && spot == ""){
           outcome.NullFail = true
+          outcomeSummary = "Found an empty field in that position."
         }
         //type
         if(check.Type == "number") {
           _, err := strconv.Atoi(spot)
           if err != nil {
             outcome.TypeFail = true
+            outcomeSummary = "Unable to convert that field to a Number."
           }
         }
         //Pattern
         if(check.Pattern != ""){
-          match, _ := regexp.MatchString(check.Pattern,spot)
-          if(!match){
-            outcome.RegexFail = true
+          if(!strings.Contains(spot, check.Pattern)){
+            match, _ := regexp.MatchString(check.Pattern,spot)
+            if(!match){
+              outcome.RegexFail = true
+              outcomeSummary = "Unable to find a match using the reggex pattern passed in."
+            }
           }
         }
+
         expected := FieldResult{
           LineName: check.LineName,
           FieldNumber: strconv.Itoa(check.FieldNumber),
           Result: check.Pattern,
         }
+
         found := FieldResult{
           LineName: line.Header,
-          FieldNumber: strconv.Itoa(check.FieldNumber+1),
+          FieldNumber: strconv.Itoa(check.FieldNumber),
           Result: spot,
         }
 
         outcome.Expected = append(outcome.Expected, expected)
         outcome.Found = append(outcome.Found, found)
+        outcome.OutcomeSummary = append(outcome.OutcomeSummary, outcomeSummary)
       }
     }
 
   }
   return outcome
+}
+
+func PrintSuccess(message string){
+      // ANSI escape code for green color
+    green := "\033[32m"
+
+    // ANSI escape code to reset color
+    reset := "\033[0m"
+
+    fmt.Printf("%s%s%s\n", green, message, reset)
+}
+
+func PrintFailure(message string){
+  // ANSI escape code for red color
+    red := "\033[31m"
+
+    // ANSI escape code to reset color
+    reset := "\033[0m"
+
+    fmt.Printf("%s%s%s\n", red, message, reset)
+}
+
+func (o *FailOutCome) Print (verbose bool, senderInfo string){
+  success := o.DidAllConfigsPass()
+  if(success) {
+    PrintSuccess(fmt.Sprintf("%c Message from %s validated successfully. \n", '\u2714', senderInfo))
+  } else {
+    PrintFailure(fmt.Sprintf("%c Message from %s failed validation. \n", '\u2718', senderInfo))
+  }
+  
+  if(verbose){
+    fmt.Printf("==========VERBOSE LOGGING for message from %s========== \n",senderInfo)
+    for i,msg := range o.OutcomeSummary {
+      fmt.Println(">>>>>")
+      fmt.Printf("Summary: %s \n",msg)
+      fmt.Println("----------")
+      fmt.Println("Expected:")
+      fmt.Printf("Looking at %s %s \n", o.Expected[i].LineName, o.Expected[i].FieldNumber)
+      fmt.Printf("Trying to find or match this pattern: %s \n", o.Expected[i].Result)
+      fmt.Println("----------")
+      fmt.Println("FOUND:")
+      fmt.Printf("Looking at %s %s \n", o.Found[i].LineName, o.Found[i].FieldNumber)
+      fmt.Printf("Found this in the field listed above %s \n", o.Found[i].Result)
+      fmt.Println("<<<<<")
+    }
+    fmt.Printf("========== End VERBOSE LOGGING for message from %s========== \n",senderInfo)
+  }
 }
 
 
@@ -270,7 +335,7 @@ func main() {
     return
   }
 
-  fmt.Printf("Configs loaded!\n")
+  fmt.Println("Configs loaded!")
   
   //Open Listener
   server := NewServer(":" + strconv.Itoa(config.Port),config.SendAcks)
@@ -278,9 +343,10 @@ func main() {
 
   //Validate messages based on configurations
   go func(){
-    fmt.Print("Reading from the channel")
+    fmt.Println("Reading from the channel")
     for msg := range server.msgChan{
-      CheckAgainstConfigs(config,msg.Message)
+      result := CheckAgainstConfigs(config, msg.Message)
+      result.Print(config.VerboseLogging, msg.Sender.RemoteAddr().String())
     }
   }()
 
